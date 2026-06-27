@@ -334,14 +334,15 @@ def main():
             imdb_ratings_to_set = EH.filter_items(imdb_ratings, trakt_ratings, key="IMDB_ID")
             trakt_ratings_to_set = EH.filter_items(trakt_ratings, imdb_ratings, key="IMDB_ID")
 
+            # --- MODIFICARE: Păstrăm doar IMDB-ul ca destinație pentru acestea ---
             imdb_reviews_to_set = EH.filter_items(imdb_reviews, trakt_reviews, key="IMDB_ID")
-            trakt_reviews_to_set = EH.filter_items(trakt_reviews, imdb_reviews, key="IMDB_ID")
+            trakt_reviews_to_set = [] # Am golit lista (nu mai trimitem review-uri din IMDB în Trakt)
 
             imdb_watchlist_to_set = EH.filter_items(imdb_watchlist, trakt_watchlist, key="IMDB_ID")
-            trakt_watchlist_to_set = EH.filter_items(trakt_watchlist, imdb_watchlist, key="IMDB_ID")
+            trakt_watchlist_to_set = [] # Am golit lista (nu mai trimitem watchlist din IMDB în Trakt)
 
             imdb_watch_history_to_set = EH.filter_items(imdb_watch_history, trakt_watch_history, key="IMDB_ID")
-            trakt_watch_history_to_set = EH.filter_items(trakt_watch_history, imdb_watch_history, key="IMDB_ID")
+            trakt_watch_history_to_set = [] # Am golit lista (nu mai trimitem istoric din IMDB în Trakt)
             
             if mark_rated_as_watched_value:
                 # Combine Trakt and IMDB Ratings into one list
