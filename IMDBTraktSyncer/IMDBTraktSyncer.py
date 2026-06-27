@@ -342,7 +342,7 @@ def main():
             trakt_watchlist_to_set = [] # Am golit lista (nu mai trimitem watchlist din IMDB în Trakt)
 
             imdb_watch_history_to_set = EH.filter_items(imdb_watch_history, trakt_watch_history, key="IMDB_ID")
-            trakt_watch_history_to_set = [] # Am golit lista (nu mai trimitem istoric din IMDB în Trakt)
+            trakt_watch_history_to_set = EH.filter_items(trakt_watch_history, imdb_watch_history, key="IMDB_ID")
             
             if mark_rated_as_watched_value:
                 # Combine Trakt and IMDB Ratings into one list
@@ -652,7 +652,8 @@ def main():
                                     "ids": {
                                         "imdb": item["IMDB_ID"]
                                     },
-                                    "rating": item["Rating"]
+                                    "rating": item["Rating"],
+                                    "rated_at": item["Date_Added"]
                                 }]
                             }
                         elif item["Type"] == "movie":
@@ -662,7 +663,8 @@ def main():
                                     "ids": {
                                         "imdb": item["IMDB_ID"]
                                     },
-                                    "rating": item["Rating"]
+                                    "rating": item["Rating"],
+                                    "rated_at": item["Date_Added"]
                                 }]
                             }
                         elif item["Type"] == "episode":
@@ -672,7 +674,8 @@ def main():
                                     "ids": {
                                         "imdb": item["IMDB_ID"]
                                     },
-                                    "rating": item["Rating"]
+                                    "rating": item["Rating"],
+                                    "rated_at": item["Date_Added"]
                                 }]
                             }
                         else:
