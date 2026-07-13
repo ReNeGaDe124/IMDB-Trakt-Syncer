@@ -491,6 +491,22 @@ def main():
             for imdb_id, imdb_rating in imdb_ratings_dict.items():
                 if imdb_id in trakt_ratings_dict:
                     trakt_rating = trakt_ratings_dict[imdb_id]
+
+                    # ── TEMPORARY DEBUG (remove once the mismatch is diagnosed) ──
+                    # Prints every IMDB_ID present on both sides, with explicit
+                    # repr() and type() for the Rating value on each side, so we
+                    # can see whether "10 != 10" is really comparing equal types
+                    # with equal values, or something more subtle (str vs int,
+                    # None, a stale dict entry from a duplicate IMDB_ID, etc.).
+                    print(
+                        f" - [DEBUG] {imdb_id} ({imdb_rating.get('Title')}): "
+                        f"IMDB Rating={imdb_rating['Rating']!r} ({type(imdb_rating['Rating']).__name__}), "
+                        f"Trakt Rating={trakt_rating['Rating']!r} ({type(trakt_rating['Rating']).__name__}), "
+                        f"equal={imdb_rating['Rating'] == trakt_rating['Rating']}, "
+                        f"IMDB Date_Added={imdb_rating.get('Date_Added')!r}, "
+                        f"Trakt Date_Added={trakt_rating.get('Date_Added')!r}"
+                    )
+
                     if imdb_rating['Rating'] != trakt_rating['Rating']:
                         imdb_date_added = datetime.fromisoformat(imdb_rating['Date_Added'].replace('Z', '')).replace(tzinfo=timezone.utc)
                         trakt_date_added = datetime.fromisoformat(trakt_rating['Date_Added'].replace('Z', '')).replace(tzinfo=timezone.utc)
