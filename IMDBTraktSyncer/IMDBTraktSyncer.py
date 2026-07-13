@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import sys
 import argparse
@@ -18,6 +19,84 @@ from IMDBTraktSyncer import arguments
 
 class PageLoadException(Exception):
     pass
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Watch-history checkpoint
+#
+# The IMDB watch-history loop below pushes items one at a time via Selenium
+# (full page load + DOM interaction per item), which costs several seconds
+# each. A large backlog (thousands of items — e.g. after first enabling
+# mark_rated_as_watched) can take hours to fully process, far longer than any
+# single run is given to complete. Without a checkpoint, a run that times out
+# partway through discards its progress, and the next run starts over from
+# item 1 — never making net progress on a backlog larger than what fits in
+# one run's time budget.
+#
+# This checkpoint records which IMDB_IDs have already been confirmed pushed
+# to IMDB watch history in a *previous* run, so a re-run can skip them and
+# continue from where it left off, regardless of what the freshly-downloaded
+# checkins.csv shows (that export can lag or be incomplete for very large
+# histories). It is intentionally just a set of IMDB_IDs — no timestamps or
+# metadata — since only "have we already pushed this one" is needed.
+#
+# Path resolution: checks IMDBTRAKTSYNCER_CHECKPOINT_PATH first, so a host
+# environment (e.g. a container that redirects package-directory state to a
+# persistent volume, the way this fork already does for the Chrome/Chromedriver
+# cache) can point it somewhere that survives package reinstalls. Falls back
+# to living next to credentials.txt for standalone/non-container use.
+_CHECKPOINT_ENV_VAR = "IMDBTRAKTSYNCER_CHECKPOINT_PATH"
+
+def _checkpoint_path(directory: str) -> str:
+    override = os.environ.get(_CHECKPOINT_ENV_VAR)
+    if override:
+        return override
+    return os.path.join(directory, "sync_checkpoint.json")
+
+def _load_watch_history_checkpoint(directory: str) -> set:
+    """Return the set of IMDB_IDs already pushed to IMDB watch history in a
+    prior run. Returns an empty set if no checkpoint exists yet or the file
+    can't be read — a missing/corrupt checkpoint should never block syncing,
+    it just means we can't skip anything this run."""
+    path = _checkpoint_path(directory)
+    try:
+        if not os.path.exists(path):
+            return set()
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        ids = data.get('completed_imdb_ids', [])
+        return set(ids)
+    except Exception as e:
+        print(f" - Could not read watch-history checkpoint ({path}): {e}. Starting without one.")
+        return set()
+
+def _save_watch_history_checkpoint(directory: str, completed_ids: set) -> None:
+    """Persist the current set of completed IMDB_IDs. Called after every
+    successful item (not just at the end) so a mid-run timeout or crash
+    doesn't lose progress already made."""
+    path = _checkpoint_path(directory)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = path + ".tmp"
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump({'completed_imdb_ids': sorted(completed_ids)}, f)
+        os.replace(tmp_path, path)  # atomic on POSIX — avoids a half-written
+                                     # checkpoint if the process is killed
+                                     # mid-write (e.g. the 20-minute timeout).
+    except Exception as e:
+        print(f" - Could not write watch-history checkpoint ({path}): {e}")
+
+def _clear_watch_history_checkpoint(directory: str) -> None:
+    """Remove the checkpoint once a run completes the full watch-history list
+    with no items left to process — mirroring the behaviour described for
+    the checkpoint mechanism in TraktIMDbSync, the actively maintained
+    successor to this project: a fully successful run clears the checkpoint
+    file automatically, since there's nothing left to skip next time."""
+    path = _checkpoint_path(directory)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        print(f" - Could not clear watch-history checkpoint ({path}): {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="IMDBTraktSyncer CLI")
@@ -374,6 +453,31 @@ def main():
             
             # Skip adding shows to trakt watch history, because it will mark all episodes as watched
             trakt_watch_history_to_set = EH.remove_shows(trakt_watch_history_to_set)
+
+            # Filter imdb_watch_history_to_set against the checkpoint of IMDB_IDs
+            # already confirmed pushed to IMDB watch history in a previous run.
+            # See the checkpoint helper functions above for why this exists:
+            # this loop pushes via Selenium at several seconds per item, and a
+            # large backlog can take far longer than one run gets before its
+            # timeout — without this, a run that times out partway through
+            # would have the next run start over from item 1 instead of
+            # continuing the backlog down.
+            # Only imdb_watch_history_to_set is checkpointed: trakt_watch_history_to_set
+            # is pushed via the Trakt API (fast, not Selenium-bound) and doesn't
+            # hit the same backlog-vs-timeout problem.
+            _watch_history_checkpoint = _load_watch_history_checkpoint(directory)
+            if _watch_history_checkpoint:
+                _before_checkpoint_count = len(imdb_watch_history_to_set)
+                imdb_watch_history_to_set = [
+                    item for item in imdb_watch_history_to_set
+                    if item['IMDB_ID'] not in _watch_history_checkpoint
+                ]
+                _skipped_count = _before_checkpoint_count - len(imdb_watch_history_to_set)
+                if _skipped_count:
+                    print(
+                        f" - Skipping {_skipped_count} item(s) already pushed to "
+                        f"IMDB watch history in a previous run (per checkpoint)."
+                    )
             
             # Filter ratings to update
             imdb_ratings_to_update = []
@@ -1258,7 +1362,13 @@ def main():
                                             WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'ipc-promptable-base__content')]//div[@data-titleinlist='true']")))
                                             
                                             print(f" - Adding {item.get('Type')} ({item_count} of {num_items}): {episode_title}{item.get('Title')}{year_str} to IMDB Watch History ({item.get('IMDB_ID')})")
-                            
+
+                                            # Record success in the checkpoint immediately (not batched
+                                            # until the loop ends) so a mid-run timeout still preserves
+                                            # progress made on every item confirmed before it.
+                                            _watch_history_checkpoint.add(item['IMDB_ID'])
+                                            _save_watch_history_checkpoint(directory, _watch_history_checkpoint)
+
                                             break  # Break the loop if successful
                                         except TimeoutException:
                                             retry_count += 1
@@ -1272,6 +1382,13 @@ def main():
                                     error_message2 = f"   - {item['Type'].capitalize()} already exists in IMDB watch history."
                                     EL.logger.error(error_message1)
                                     EL.logger.error(error_message2)
+
+                                    # This item was already in IMDB watch history (data-titleinlist
+                                    # was already 'true' before we clicked anything) — that's a
+                                    # successful end-state for checkpoint purposes even though the
+                                    # branch above logs it as an error, so record it too.
+                                    _watch_history_checkpoint.add(item['IMDB_ID'])
+                                    _save_watch_history_checkpoint(directory, _watch_history_checkpoint)
                             else:
                                 # Handle the case when the URL contains "/reference"
                                 error_message1 = f"IMDB reference view setting is enabled. Adding items to IMDB Check-ins is not supported. See: https://www.imdb.com/preferences/general"
