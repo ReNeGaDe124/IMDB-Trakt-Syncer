@@ -357,7 +357,16 @@ def main():
                     EL.logger.error("Error: Not signed in to IMDB")
                     driver.close()
                     driver.quit()
-                    service.stop()
+                    # `service` is only assigned on the plain-Selenium driver
+                    # path (see the UC_AVAILABLE branch above, around line
+                    # 242) — when undetected_chromedriver is in use, uc.Chrome()
+                    # starts Chrome itself and this name is never bound, so an
+                    # unconditional service.stop() here raises UnboundLocalError
+                    # and masks the "Not signed in" message above with a
+                    # confusing unrelated traceback. Guard it the same way the
+                    # outer except block at the bottom of main() already does.
+                    if 'service' in locals() and service is not None:
+                        service.stop()
                     raise SystemExit
             
             # Check IMDB Language for compatability
@@ -1499,7 +1508,15 @@ def main():
             print("Closing webdriver...")
             driver.close()
             driver.quit()
-            service.stop()
+            # See the matching guard + comment near the "Not signed in to
+            # IMDB" bailout above (~line 360): `service` is never bound on
+            # the undetected_chromedriver path, so calling it unconditionally
+            # raises UnboundLocalError here on every normal run when UC is in
+            # use — even after a fully successful sync (ratings/watchlist/
+            # watch history all pushed), turning a real success into a
+            # reported failure purely because of this cleanup line.
+            if 'service' in locals() and service is not None:
+                service.stop()
             print("IMDBTraktSyncer Complete")
         
         except Exception as e:
