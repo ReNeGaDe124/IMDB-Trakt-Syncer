@@ -208,7 +208,24 @@ def main():
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-extensions")
-            options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            # excludeSwitches is only added on the plain-selenium fallback
+            # path. UC starts Chrome itself via subprocess.Popen on the raw
+            # binary (see undetected_chromedriver/__init__.py), then
+            # attaches a WebDriver session separately — in that flow,
+            # generic experimental_options like excludeSwitches get sent as
+            # part of desired_capabilities and are rejected by chromedriver
+            # ("unrecognized chrome option: excludeSwitches"). UC handles
+            # "prefs" specially (writes it to the profile's Preferences file
+            # and deletes it from experimental_options before capabilities
+            # are built — see ChromeOptions.handle_prefs in UC's options.py,
+            # whose own comment says this is "to avoid an error") but has no
+            # equivalent handling for excludeSwitches, so it's left out here
+            # entirely rather than hit the same class of error. It's also
+            # redundant with UC's own (more thorough, binary-level)
+            # automation-signature removal, so nothing is lost by skipping
+            # it on this path.
+            if not UC_AVAILABLE:
+                options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
             options.add_argument('--log-level=3')
             
             try:
