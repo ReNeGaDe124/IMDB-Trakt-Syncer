@@ -14,6 +14,19 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from pathlib import Path
+
+# undetected_chromedriver patches the Chrome binary at runtime to remove the
+# CDP-level automation signatures (navigator.webdriver, window.chrome absence,
+# etc.) that sites like IMDb (behind Akamai Bot Manager) check for beyond a
+# simple User-Agent string. Optional: falls back to plain selenium.webdriver
+# if the package isn't installed, so this fork still runs in environments
+# that haven't added it yet.
+try:
+    import undetected_chromedriver as uc
+    UC_AVAILABLE = True
+except ImportError:
+    UC_AVAILABLE = False
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from IMDBTraktSyncer import arguments
 
@@ -170,7 +183,11 @@ def main():
             user_data_directory = CC.get_user_data_directory()
             
             # Initialize Chrome options
-            options = Options()
+            # ChromeOptions from undetected_chromedriver subclasses the same
+            # ChromiumOptions base as selenium's Options, so every
+            # add_argument()/add_experimental_option() call below behaves
+            # identically regardless of which one this resolves to.
+            options = uc.ChromeOptions() if UC_AVAILABLE else Options()
             options.binary_location = chrome_binary_path
             options.add_argument(f"--user-data-dir={user_data_directory}")
             if headless == True:
@@ -194,18 +211,37 @@ def main():
             options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
             options.add_argument('--log-level=3')
             
-            service = Service(executable_path=chromedriver_binary_path)
-                        
-            # Temporary solution for removing "DevTools listening on ws:" line on Windows for better readability
-            # Only use CREATE_NO_WINDOW on Windows systems (32-bit or 64-bit)
-            if browser_type == "chrome":
-                if sys.platform == "win32":
-                    creation_flags = subprocess.CREATE_NO_WINDOW
-                    service.creation_flags = creation_flags
-
             try:
-                # Initialize WebDriver with the given options and service
-                driver = webdriver.Chrome(service=service, options=options)
+                if UC_AVAILABLE:
+                    # driver_executable_path / browser_executable_path are
+                    # passed explicitly so UC uses the binaries checkChrome()
+                    # already downloaded/verified above, instead of UC's own
+                    # (separate) auto-download-and-patch mechanism.
+                    # headless not passed explicitly here — UC auto-detects
+                    # "--headless" from options.arguments (already added
+                    # above by the forked "if headless == True" block) and
+                    # applies the same logic; passing it a second time here
+                    # would add a duplicate --headless=new argument.
+                    driver = uc.Chrome(
+                        options=options,
+                        driver_executable_path=chromedriver_binary_path,
+                        browser_executable_path=chrome_binary_path,
+                        no_sandbox=True,
+                        use_subprocess=True,
+                    )
+                else:
+                    service = Service(executable_path=chromedriver_binary_path)
+
+                    # Temporary solution for removing "DevTools listening on ws:" line on Windows for better readability
+                    # Only use CREATE_NO_WINDOW on Windows systems (32-bit or 64-bit)
+                    if browser_type == "chrome":
+                        if sys.platform == "win32":
+                            creation_flags = subprocess.CREATE_NO_WINDOW
+                            service.creation_flags = creation_flags
+
+                    # Initialize WebDriver with the given options and service
+                    driver = webdriver.Chrome(service=service, options=options)
+
                 driver.set_page_load_timeout(60)
 
             except Exception as e:
