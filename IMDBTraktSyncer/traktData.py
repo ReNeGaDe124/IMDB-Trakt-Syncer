@@ -209,16 +209,21 @@ def get_trakt_watch_history(encoded_username):
                     watched_episodes.append({'Title': episode_title, 'Year': episode_year, 'IMDB_ID': imdb_episode_id, 'TraktID': trakt_episode_id, 'TraktShowID': trakt_show_id, 'SeasonNumber': season_number, 'EpisodeNumber': episode_number, 'Date_Added': watched_at, 'WatchedAt': watched_at, 'Type': 'episode'})
                     seen_ids.add(trakt_episode_id)
 
-    # Filter watched_shows for completed shows where 80% or more of the show has been watched AND where the show's status is "ended" or "cancelled"
+    # Filter watched_shows for shows where 80% or more of the currently aired
+    # episodes have been watched. Previously this also required the show's
+    # status to be "ended"/"cancelled", which meant a still-airing show (e.g.
+    # "returning series") could never be treated as watched here -- and so
+    # could never be removed from the watchlist by remove_watched_from_watchlists,
+    # no matter how many aired episodes were watched or rated. Dropped that
+    # requirement: any show past the 80% threshold now qualifies, airing or not.
     filtered_watched_shows = []
     for show in watched_shows:
         trakt_show_id = show['TraktID']
-        show_status = show['ShowStatus']
         aired_episodes = show['AiredEpisodes']
         episode_numbers = [episode['EpisodeNumber'] for episode in watched_episodes if episode['Type'] == 'episode' and episode['TraktShowID'] == trakt_show_id]
         unique_watched_episode_count = len(episode_numbers)
         
-        if (show_status.lower() in ['ended', 'cancelled', 'canceled']) and (unique_watched_episode_count >= 0.8 * int(aired_episodes)):
+        if unique_watched_episode_count >= 0.8 * int(aired_episodes):
             filtered_watched_shows.append(show)
 
     # Update watched_shows with the filtered results
