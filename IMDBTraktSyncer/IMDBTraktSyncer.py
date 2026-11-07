@@ -4,6 +4,7 @@ import time
 import sys
 import argparse
 import subprocess
+import re
 from datetime import datetime, timezone
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -32,6 +33,52 @@ from IMDBTraktSyncer import arguments
 
 class PageLoadException(Exception):
     pass
+
+
+def build_consistent_user_agent(chrome_binary_path):
+    """
+    Build a User-Agent that agrees with the browser that is really running.
+
+    The old code hardcoded "Windows NT 10.0 ... Chrome/137", while the
+    Chrome-for-Testing binary this script downloads is a much newer version
+    (e.g. 157) running on Linux. A UA that contradicts the browser's own
+    navigator.platform / userAgentData / TLS fingerprint is one of the cheapest
+    things IMDb's AWS WAF can flag -- and when it does, it answers with a
+    CAPTCHA page and HTTP 405 (the "Status code: 405" on sign-in / homepage).
+
+    Version is taken from the binary's path (.../Chrome/157.0.8103.38/...), or
+    from `<binary> --version` as a fallback. Chrome has "reduced" its UA, so
+    the real UA is always "<major>.0.0.0". Returns None if the major version
+    can't be determined (the caller then leaves the UA untouched).
+    """
+    major = None
+    m = re.search(r"(\d+)\.\d+\.\d+\.\d+", str(chrome_binary_path or ""))
+    if m:
+        major = m.group(1)
+    else:
+        try:
+            out = subprocess.run(
+                [str(chrome_binary_path), "--version"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+            m = re.search(r"(\d+)\.\d+\.\d+\.\d+", out)
+            if m:
+                major = m.group(1)
+        except Exception:
+            pass
+    if not major:
+        return None
+
+    if sys.platform.startswith("win"):
+        os_part = "Windows NT 10.0; Win64; x64"
+    elif sys.platform == "darwin":
+        os_part = "Macintosh; Intel Mac OS X 10_15_7"
+    else:
+        os_part = "X11; Linux x86_64"
+    return (
+        f"Mozilla/5.0 ({os_part}) AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{major}.0.0.0 Safari/537.36"
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Watch-history checkpoint
@@ -192,7 +239,13 @@ def main():
             options.add_argument(f"--user-data-dir={user_data_directory}")
             if headless == True:
                 options.add_argument("--headless=new")
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36')
+            # UA must match the real browser's version and OS (see
+            # build_consistent_user_agent). Still passed explicitly because the
+            # default headless UA says "HeadlessChrome".
+            _user_agent = build_consistent_user_agent(chrome_binary_path)
+            if _user_agent:
+                options.add_argument(f'--user-agent={_user_agent}')
+                print(f"Using User-Agent: {_user_agent}")
             options.add_experimental_option("prefs", {
                 "download.default_directory": directory,
                 "download.directory_upgrade": True,
