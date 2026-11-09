@@ -236,6 +236,14 @@ def main():
             # identically regardless of which one this resolves to.
             options = uc.ChromeOptions() if UC_AVAILABLE else Options()
             options.binary_location = chrome_binary_path
+            # 'eager': driver.get() returns at DOMContentLoaded instead of waiting
+            # for the window 'load' event. IMDb pages pull in ads, trackers and
+            # trailer players that can keep 'load' pending for minutes; with the
+            # default 'normal' strategy that shows up as "Timed out receiving
+            # message from renderer: 60.000" and a hung browser. Everything this
+            # script needs is gated by its own explicit waits, so nothing relies
+            # on the full 'load' event.
+            options.page_load_strategy = 'eager'
             options.add_argument(f"--user-data-dir={user_data_directory}")
             if headless == True:
                 options.add_argument("--headless=new")
